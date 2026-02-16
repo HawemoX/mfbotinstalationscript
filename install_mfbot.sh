@@ -295,39 +295,61 @@ download_mfbot() {
 download_webinterface() {
     print_header "Downloading Web Interface"
     
-    local web_url="https://download.mfbot.de/v5.0.0.4/mfbot-webinterface.zip"
+    # Try GitHub repository first (community Docker version)
+    local github_url="https://github.com/mangunowsky/MFBotDocker/archive/refs/heads/master.zip"
     
-    print_info "Downloading web interface..."
-    if wget -q --show-progress -O /tmp/mfbot-webinterface.zip "$web_url" 2>&1; then
-        # Verify it's actually a zip file
-        if file /tmp/mfbot-webinterface.zip | grep -q "Zip archive"; then
+    print_info "Downloading web interface from GitHub..."
+    if wget -q --show-progress -O /tmp/mfbot-web-github.zip "$github_url" 2>&1; then
+        # Verify it's a valid zip file
+        if file /tmp/mfbot-web-github.zip 2>/dev/null | grep -q "Zip archive"; then
+            print_info "Extracting web interface..."
+            unzip -q -o /tmp/mfbot-web-github.zip -d /tmp/mfbot-extract
+            
+            # The Web directory contains the interface
+            if [ -d "/tmp/mfbot-extract/MFBotDocker-master/Web" ]; then
+                cp -r /tmp/mfbot-extract/MFBotDocker-master/Web/* "$WEB_DIR/"
+                rm -rf /tmp/mfbot-extract
+                rm /tmp/mfbot-web-github.zip
+                print_success "Web interface downloaded from GitHub"
+                return 0
+            else
+                print_warning "Web directory not found in archive"
+            fi
+        else
+            print_warning "Downloaded file is not a valid zip archive"
+        fi
+    fi
+    
+    # Fallback: Try official download (may not work)
+    print_info "Trying official download server..."
+    local official_url="https://download.mfbot.de/v5.0.0.4/mfbot-webinterface.zip"
+    
+    if wget -q --show-progress --timeout=10 -O /tmp/mfbot-webinterface.zip "$official_url" 2>&1; then
+        if file /tmp/mfbot-webinterface.zip 2>/dev/null | grep -q "Zip archive"; then
             print_info "Extracting web interface..."
             unzip -q -o /tmp/mfbot-webinterface.zip -d "$WEB_DIR"
             rm /tmp/mfbot-webinterface.zip
-            print_success "Web interface downloaded and extracted"
-        else
-            print_warning "Downloaded file is not a valid zip archive"
-            print_info "Creating basic web interface setup..."
-            create_basic_webinterface
+            print_success "Web interface downloaded from official server"
+            return 0
         fi
-    else
-        print_warning "Web interface download failed"
-        print_info "Creating basic web interface setup..."
-        create_basic_webinterface
     fi
+    
+    # If both failed, create basic interface
+    print_warning "Could not download web interface from any source"
+    print_info "Creating basic fallback web interface..."
+    create_basic_webinterface
 }
 
 create_basic_webinterface() {
     print_info "Setting up minimal web interface..."
     
-    # Create requirements.txt
+    # Create requirements.txt matching the GitHub version
     cat > "$WEB_DIR/requirements.txt" << 'EOF'
-pandas>=0.23.0
-plotly>=2.7.0
-dash==2.14.2
+pandas>=1.0.0
+plotly>=4.0.0
+dash>=2.0.0
 dash-bootstrap-components>=1.0.0
 requests>=2.26.0
-flask>=2.0.0
 colorama>=0.4.0
 EOF
 
