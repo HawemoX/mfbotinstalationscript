@@ -295,16 +295,227 @@ download_mfbot() {
 download_webinterface() {
     print_header "Downloading Web Interface"
     
-    local web_url="https://download.mfbot.de/latest/mfbot-webinterface.zip"
+    local web_url="https://download.mfbot.de/v5.0.0.4/mfbot-webinterface.zip"
     
     print_info "Downloading web interface..."
-    wget -q --show-progress -O /tmp/mfbot-webinterface.zip "$web_url"
+    if wget -q --show-progress -O /tmp/mfbot-webinterface.zip "$web_url" 2>&1; then
+        # Verify it's actually a zip file
+        if file /tmp/mfbot-webinterface.zip | grep -q "Zip archive"; then
+            print_info "Extracting web interface..."
+            unzip -q -o /tmp/mfbot-webinterface.zip -d "$WEB_DIR"
+            rm /tmp/mfbot-webinterface.zip
+            print_success "Web interface downloaded and extracted"
+        else
+            print_warning "Downloaded file is not a valid zip archive"
+            print_info "Creating basic web interface setup..."
+            create_basic_webinterface
+        fi
+    else
+        print_warning "Web interface download failed"
+        print_info "Creating basic web interface setup..."
+        create_basic_webinterface
+    fi
+}
+
+create_basic_webinterface() {
+    print_info "Setting up minimal web interface..."
     
-    print_info "Extracting web interface..."
-    unzip -q -o /tmp/mfbot-webinterface.zip -d "$WEB_DIR"
-    rm /tmp/mfbot-webinterface.zip
+    # Create requirements.txt
+    cat > "$WEB_DIR/requirements.txt" << 'EOF'
+pandas>=0.23.0
+plotly>=2.7.0
+dash==2.14.2
+dash-bootstrap-components>=1.0.0
+requests>=2.26.0
+flask>=2.0.0
+colorama>=0.4.0
+EOF
+
+    # Create a basic MainProgram.py
+    cat > "$WEB_DIR/MainProgram.py" << 'EOFPY'
+#!/usr/bin/env python3
+"""
+Basic MFBot Web Interface
+This is a minimal fallback interface created by the installation script.
+"""
+
+import argparse
+import sys
+from flask import Flask, render_template_string, request, redirect, session
+import requests
+import json
+from functools import wraps
+
+app = Flask(__name__)
+app.secret_key = 'mfbot-web-interface-secret-key-change-me'
+
+# Global configuration
+BOT_API_URL = None
+REMOTE_USER = None
+REMOTE_PASS = None
+WEB_USER = None
+WEB_PASS = None
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect('/login')
+        return f(*args, **kwargs)
+    return decorated
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username == WEB_USER and password == WEB_PASS:
+            session['logged_in'] = True
+            return redirect('/')
+        return render_template_string(LOGIN_TEMPLATE, error="Invalid credentials")
+    return render_template_string(LOGIN_TEMPLATE)
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    return redirect('/login')
+
+@app.route('/')
+@requires_auth
+def index():
+    try:
+        # Try to connect to bot
+        response = requests.get(f"{BOT_API_URL}/status", 
+                              auth=(REMOTE_USER, REMOTE_PASS),
+                              timeout=5)
+        if response.status_code == 200:
+            status = "Connected"
+            status_class = "success"
+        else:
+            status = "Connection Error"
+            status_class = "warning"
+    except:
+        status = "Cannot connect to bot"
+        status_class = "danger"
     
-    print_success "Web interface downloaded"
+    return render_template_string(MAIN_TEMPLATE, 
+                                 bot_url=BOT_API_URL,
+                                 status=status,
+                                 status_class=status_class)
+
+LOGIN_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MFBot Web Interface - Login</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f0f0; margin: 0; padding: 0; }
+        .container { max-width: 400px; margin: 100px auto; background: white; padding: 30px; border-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; text-align: center; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        .error { color: red; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 MFBot Web Interface</h1>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+        <form method="post">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+    </div>
+</body>
+</html>
+'''
+
+MAIN_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MFBot Web Interface</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f0f0; margin: 0; padding: 0; }
+        .header { background: #007bff; color: white; padding: 20px; }
+        .container { max-width: 1200px; margin: 20px auto; padding: 20px; }
+        .card { background: white; padding: 20px; margin: 10px 0; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .status-success { color: green; }
+        .status-warning { color: orange; }
+        .status-danger { color: red; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .info { background: #e7f3ff; padding: 15px; border-left: 4px solid #007bff; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 MFBot Web Interface</h1>
+        <a href="/logout" style="color: white; float: right;">Logout</a>
+    </div>
+    <div class="container">
+        <div class="card">
+            <h2>Connection Status</h2>
+            <p><strong>Bot API:</strong> {{ bot_url }}</p>
+            <p><strong>Status:</strong> <span class="status-{{ status_class }}">{{ status }}</span></p>
+        </div>
+        
+        <div class="info">
+            <h3>⚠️ Basic Web Interface</h3>
+            <p>This is a minimal fallback web interface created by the installation script.</p>
+            <p><strong>The full web interface could not be downloaded.</strong></p>
+            <p>This basic interface only provides connection status. For full functionality:</p>
+            <ol>
+                <li>Download the web interface manually from: <a href="https://download.mfbot.de/v5.0.0.4/mfbot-webinterface.zip" target="_blank">here</a></li>
+                <li>Extract it to: <code>/opt/mfbot/webinterface/</code></li>
+                <li>Restart the web interface service</li>
+            </ol>
+            <p>Or check the MFBot forum for alternative web interfaces or Docker solutions.</p>
+        </div>
+
+        <div class="card">
+            <h2>Quick Links</h2>
+            <ul>
+                <li><a href="https://www.mfbot.de/en/" target="_blank">MFBot Official Site</a></li>
+                <li><a href="https://forum.mfbot.de/" target="_blank">MFBot Forum</a></li>
+                <li><a href="https://github.com/mangunowsky/MFBotDocker" target="_blank">MFBot Docker (Alternative)</a></li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='MFBot Web Interface (Basic)')
+    parser.add_argument('-a', '--address', required=True, help='Bot API address (e.g., http://127.0.0.1:8443)')
+    parser.add_argument('--remoteU', required=True, help='Bot remote username')
+    parser.add_argument('--remoteP', required=True, help='Bot remote password')
+    parser.add_argument('--webU', required=True, help='Web interface username')
+    parser.add_argument('--webP', required=True, help='Web interface password')
+    parser.add_argument('--port', type=int, default=8050, help='Web interface port')
+    parser.add_argument('--debug', type=int, default=0, help='Debug mode')
+    
+    args = parser.parse_args()
+    
+    BOT_API_URL = args.address.rstrip('/')
+    REMOTE_USER = args.remoteU
+    REMOTE_PASS = args.remoteP
+    WEB_USER = args.webU
+    WEB_PASS = args.webP
+    
+    print(f"Starting MFBot Web Interface (Basic) on port {args.port}")
+    print(f"Bot API: {BOT_API_URL}")
+    print(f"Access at: http://localhost:{args.port}")
+    
+    app.run(host='0.0.0.0', port=args.port, debug=(args.debug == 1))
+EOFPY
+
+    chmod +x "$WEB_DIR/MainProgram.py"
+    
+    print_success "Basic web interface created"
 }
 
 setup_python_environment() {
@@ -317,11 +528,13 @@ setup_python_environment() {
     "$WEB_DIR/venv/bin/pip" install --quiet --upgrade pip
     
     if [ -f "$WEB_DIR/requirements.txt" ]; then
-        "$WEB_DIR/venv/bin/pip" install --quiet -r "$WEB_DIR/requirements.txt"
+        print_info "Installing from requirements.txt..."
+        "$WEB_DIR/venv/bin/pip" install --quiet -r "$WEB_DIR/requirements.txt" 2>&1 | grep -v "Requirement already satisfied" || true
         print_success "Python dependencies installed"
     else
-        print_warning "requirements.txt not found, installing common dependencies..."
-        "$WEB_DIR/venv/bin/pip" install --quiet dash plotly dash-bootstrap-components requests
+        print_warning "requirements.txt not found"
+        print_info "Installing basic dependencies..."
+        "$WEB_DIR/venv/bin/pip" install --quiet flask requests
         print_success "Basic Python dependencies installed"
     fi
 }
