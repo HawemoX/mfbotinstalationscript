@@ -160,40 +160,110 @@ install_dependencies() {
 }
 
 install_dotnet() {
-    print_header "Installing .NET 6 Runtime"
+    print_header "Installing .NET Runtime"
     
-    # Check if .NET 6 is already installed
+    # Check if .NET is already installed (6 or higher)
     if command -v dotnet &> /dev/null; then
         local dotnet_version=$(dotnet --version 2>/dev/null | cut -d. -f1)
-        if [ "$dotnet_version" == "6" ] || [ "$dotnet_version" -gt "6" ]; then
-            print_success ".NET runtime already installed"
+        if [ "$dotnet_version" -ge "6" ] 2>/dev/null; then
+            print_success ".NET runtime already installed (version $dotnet_version)"
             return
         fi
     fi
     
-    print_info "Installing .NET 6 runtime..."
+    print_info "Installing .NET runtime..."
     
     case $DISTRO in
         ubuntu|debian)
             # Add Microsoft package repository
-            wget https://packages.microsoft.com/config/$DISTRO/$VERSION/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
-            dpkg -i /tmp/packages-microsoft-prod.deb
+            print_info "Adding Microsoft package repository..."
+            wget -q https://packages.microsoft.com/config/$DISTRO/$VERSION/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb 2>/dev/null || {
+                print_warning "Unable to add Microsoft repository for this version"
+                print_info "Using Microsoft's install script instead..."
+                
+                # Use Microsoft's universal install script
+                wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+                chmod +x /tmp/dotnet-install.sh
+                /tmp/dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet
+                
+                # Create symlink
+                ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+                
+                rm /tmp/dotnet-install.sh
+                
+                if command -v dotnet &> /dev/null; then
+                    print_success ".NET runtime installed via install script"
+                    return
+                else
+                    print_error ".NET installation failed"
+                    exit 1
+                fi
+            }
+            
+            dpkg -i /tmp/packages-microsoft-prod.deb 2>/dev/null
             rm /tmp/packages-microsoft-prod.deb
             
-            apt-get update -qq
-            apt-get install -y dotnet-runtime-6.0
+            print_info "Updating package cache..."
+            apt-get update -qq 2>/dev/null
+            
+            # Check what's actually available
+            print_info "Checking available .NET versions..."
+            
+            # Try .NET 8 first (Ubuntu 24.04 and newer)
+            if apt-cache policy dotnet-runtime-8.0 2>/dev/null | grep -q "Candidate:"; then
+                print_info "Installing .NET 8 runtime..."
+                if apt-get install -y dotnet-runtime-8.0 2>&1; then
+                    print_success ".NET 8 installed successfully"
+                else
+                    print_warning ".NET 8 installation failed, trying alternate method..."
+                    wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+                    chmod +x /tmp/dotnet-install.sh
+                    /tmp/dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet
+                    ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+                    rm /tmp/dotnet-install.sh
+                fi
+            # Fall back to .NET 6 for older versions
+            elif apt-cache policy dotnet-runtime-6.0 2>/dev/null | grep -q "Candidate:"; then
+                print_info "Installing .NET 6 runtime..."
+                apt-get install -y dotnet-runtime-6.0
+            else
+                print_warning ".NET not available in repositories, using Microsoft's install script..."
+                
+                wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+                chmod +x /tmp/dotnet-install.sh
+                /tmp/dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet
+                
+                ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+                rm /tmp/dotnet-install.sh
+            fi
             ;;
         fedora|rhel|centos)
-            dnf install -y dotnet-runtime-6.0
+            # Try .NET 8 first, fall back to 6
+            if dnf list dotnet-runtime-8.0 &> /dev/null; then
+                dnf install -y dotnet-runtime-8.0
+            else
+                dnf install -y dotnet-runtime-6.0
+            fi
             ;;
         *)
-            print_warning "Please install .NET 6 runtime manually from: https://dotnet.microsoft.com/download/dotnet/6.0"
-            print_info "After installing .NET, re-run this script"
-            exit 1
+            print_warning "Unknown distribution. Using Microsoft's install script..."
+            wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+            chmod +x /tmp/dotnet-install.sh
+            /tmp/dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet
+            
+            ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet
+            rm /tmp/dotnet-install.sh
             ;;
     esac
     
-    print_success ".NET 6 runtime installed"
+    # Verify installation
+    if command -v dotnet &> /dev/null; then
+        print_success ".NET runtime installed successfully"
+    else
+        print_error ".NET installation failed"
+        print_info "Please install .NET manually from: https://dotnet.microsoft.com/download"
+        exit 1
+    fi
 }
 
 create_directories() {
